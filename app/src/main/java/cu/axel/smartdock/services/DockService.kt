@@ -68,6 +68,7 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.materialswitch.MaterialSwitch
 import cu.axel.smartdock.R
 import cu.axel.smartdock.activities.LAUNCHER_ACTION
 import cu.axel.smartdock.activities.LAUNCHER_RESUMED
@@ -80,6 +81,7 @@ import cu.axel.smartdock.adapters.AppTaskAdapter
 import cu.axel.smartdock.adapters.DisplaysAdapter
 import cu.axel.smartdock.adapters.DockAppAdapter
 import cu.axel.smartdock.adapters.DockAppAdapter.OnDockAppClickListener
+import cu.axel.smartdock.adapters.WifiScanResultAdapter
 import cu.axel.smartdock.db.DBHelper
 import cu.axel.smartdock.dialogs.DockDialog
 import cu.axel.smartdock.dialogs.NotificationPermissionDialog
@@ -99,12 +101,15 @@ import cu.axel.smartdock.utils.IconPackUtils
 import cu.axel.smartdock.utils.OnSwipeListener
 import cu.axel.smartdock.utils.Utils
 import cu.axel.smartdock.widgets.HoverInterceptorLayout
+import cu.axel.smartdock.wrappers.WifiManagerWrapper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 import java.io.UnsupportedEncodingException
 import java.net.URLEncoder
+import java.util.concurrent.Executors
 
 const val DOCK_SERVICE_CONNECTED = "service_connected"
 const val ACTION_TAKE_SCREENSHOT = "take_screenshot"
@@ -115,6 +120,8 @@ const val DOCK_SERVICE_ACTION = "dock_service_action"
 class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, OnTouchListener,
     OnAppClickListener, OnDockAppClickListener {
 
+    private var wifiManagerWrapper: WifiManagerWrapper? = null
+    private var wifiList: ListView? = null
     private var activityManagerWrapper: ActivityManagerWrapper? = null
     private var orientationValue: String = ""
     private var orientation = -1
@@ -140,6 +147,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private lateinit var searchLayout: LinearLayout
     private var powerMenu: LinearLayout? = null
     private var audioPanel: LinearLayout? = null
+    private var wifiPanel: LinearLayout? = null
     private lateinit var searchEntry: LinearLayout
     private lateinit var dockLayout: RelativeLayout
     private lateinit var windowManager: WindowManager
@@ -148,6 +156,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private var powerMenuVisible = false
     private var isPinned = false
     private var audioPanelVisible = false
+    private var wifiPanelVisible = false
     private var systemApp = false
     private var preferSecondaryDisplay = false
     private lateinit var dockLayoutParams: WindowManager.LayoutParams
@@ -193,9 +202,25 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             iconPackUtils = IconPackUtils(this)
         }
         //Shizuku stuff
+        initWrappers()
+        Shizuku.addBinderReceivedListener {
+            initWrappers()
+        }
+        Shizuku.addBinderDeadListener {
+            destroyWrappers()
+        }
+    }
+
+    private fun destroyWrappers() {
+        activityManagerWrapper = null
+        wifiManagerWrapper = null
+    }
+
+    private fun initWrappers() {
         if (DeviceUtils.hasShizukuPermission()) {
             try {
                 activityManagerWrapper = ActivityManagerWrapper()
+                wifiManagerWrapper = WifiManagerWrapper()
             } catch (e: Exception) {
                 Log.e(packageName, e.toString())
             }
@@ -317,11 +342,18 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
+        wifiManager.registerScanResultsCallback(Executors.newSingleThreadExecutor(), object :
+            WifiManager.ScanResultsCallback() {
+            override fun onScanResultsAvailable() {
+                CoroutineScope(Dispatchers.Main).launch {
+                    if (wifiPanelVisible)
+                        updateWifiPanel()
+                }
+            }
+        })
+
         //Play startup sound
         DeviceUtils.playEventSound(this, "startup_sound")
-
-        //Try to connect to shizuku
-        //bindUserService()
 
         //Show the dock
         if (sharedPreferences.getBoolean("pin_dock", true))
@@ -1590,9 +1622,58 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         )
     }
 
-    private fun showWiFiPanel() {
+    private fun showSystemWiFiPanel() {
         startActivity(Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+
+    @SuppressLint("ClickableViewAccessibility")
+    fun showWifiPanel() {
+        val layoutParams = Utils.makeWindowParams(
+            Utils.dpToPx(context, 270), Utils.dpToPx(context, 300), context,
+            preferSecondaryDisplay
+        )
+        layoutParams.flags =
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        layoutParams.y = Utils.dpToPx(context, 2) + dockHeight
+        layoutParams.x = Utils.dpToPx(context, 2)
+        layoutParams.gravity = Gravity.BOTTOM or Gravity.END
+        wifiPanel = LayoutInflater.from(ContextThemeWrapper(context, R.style.AppTheme_Dock))
+            .inflate(R.layout.wifi_panel, null) as LinearLayout
+        wifiPanel!!.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE
+                && (event.y < wifiPanel!!.measuredHeight || event.x < wifiPanel!!.x)
+            )
+                hideWifiPanel()
+
+            false
+        }
+        val wifiSwitch = wifiPanel!!.findViewById<MaterialSwitch>(R.id.wifi_switch)
+        wifiSwitch.isChecked = wifiManager.isWifiEnabled
+        wifiSwitch.setOnCheckedChangeListener { _, checked ->
+            wifiManagerWrapper?.setWifiEnabled(checked)
+        }
+        wifiList = wifiPanel!!.findViewById(R.id.wifi_list)
+        ColorUtils.applyMainColor(context, sharedPreferences, wifiPanel!!)
+        windowManager.addView(wifiPanel, layoutParams)
+        wifiManagerWrapper?.startScan()
+        wifiPanelVisible = true
+    }
+
+    private fun hideWifiPanel() {
+        if (wifiPanel != null) {
+            windowManager.removeView(wifiPanel)
+            wifiPanel = null
+        }
+        wifiPanelVisible = false
+    }
+
+    fun updateWifiPanel() {
+        if (wifiList == null)
+            return
+        val results = wifiManagerWrapper!!.getScanResults()
+        wifiList!!.adapter = WifiScanResultAdapter(this, results)
+    }
+
 
     private fun toggleVolume() {
         //TODO: Implement setting
@@ -1971,7 +2052,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             true
         }
         wifiBtn.setOnClickListener {
-            showWiFiPanel()
+            if (DeviceUtils.hasShizukuPermission() && wifiManagerWrapper?.isAlive() == true) {
+                if (!wifiPanelVisible)
+                    showWifiPanel()
+                else
+                    hideWifiPanel()
+            } else
+                showSystemWiFiPanel()
         }
         wifiBtn.setOnLongClickListener {
             openWiFiSettings()
@@ -2215,33 +2302,4 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             return false
         }
     }
-
-    /*private val userServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(componentName: ComponentName, binder: IBinder?) {
-            if (binder != null && binder.pingBinder()) {
-                userService = IUserService.Stub.asInterface(binder)
-                Log.i(packageName, "User service bound")
-                Log.i(packageName, "Tasks ${userService?.getRunningTasks(10)}")
-            }
-        }
-
-        override fun onServiceDisconnected(componentName: ComponentName) {
-            userService = null;
-        }
-    }
-
-    private val userServiceArgs = Shizuku.UserServiceArgs(
-        ComponentName("cu.axel.smartdock", UserService::class.java.name)
-    )
-        .processNameSuffix("user_service")
-        .debuggable(true)
-        .version(100)
-
-    private fun bindUserService() {
-        try {
-            Shizuku.bindUserService(userServiceArgs, userServiceConnection)
-        } catch (e: Exception) {
-            Log.e(packageName, e.toString())
-        }
-    }*/
 }

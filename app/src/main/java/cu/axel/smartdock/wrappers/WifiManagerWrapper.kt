@@ -9,8 +9,6 @@ import rikka.shizuku.SystemServiceHelper
 import java.lang.reflect.Method
 
 class WifiManagerWrapper {
-
-
     private var getListMethod: Method? = null
     private var getScanResultsMethod: Method? = null
     private var binder: ShizukuBinderWrapper? = null
@@ -53,11 +51,13 @@ class WifiManagerWrapper {
 
     fun getScanResults(): List<ScanResult> {
         val results = getScanResultsMethod!!.invoke(wifiManager, "com.android.shell", "")
+        if (results is ArrayList<*>)
+            return results as ArrayList<ScanResult>
         val list = getListMethod!!.invoke(results) as ArrayList<ScanResult>
         return list
     }
 
     fun startScan() {
-        //wifiManager.startScan()
+        wifiManager?.startScan("com.android.shell", "")
     }
 }
