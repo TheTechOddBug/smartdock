@@ -7,34 +7,42 @@ import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.app.Notification
+import android.app.PendingIntent.CanceledException
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.content.pm.ActivityInfo
 import android.content.pm.LauncherApps
 import android.content.pm.ShortcutInfo
 import android.content.res.Configuration
+import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbManager
 import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.os.Process
 import android.provider.Settings
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Display
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -57,18 +65,20 @@ import android.widget.SeekBar.OnSeekBarChangeListener
 import android.widget.TextClock
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
-import androidx.core.view.setPadding
 import androidx.core.widget.addTextChangedListener
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.tabs.TabLayout
+import cu.axel.smartdock.INotificationCallback
+import cu.axel.smartdock.INotificationServiceBridge
 import cu.axel.smartdock.R
 import cu.axel.smartdock.activities.LAUNCHER_ACTION
 import cu.axel.smartdock.activities.LAUNCHER_RESUMED
@@ -81,11 +91,11 @@ import cu.axel.smartdock.adapters.AppTaskAdapter
 import cu.axel.smartdock.adapters.DisplaysAdapter
 import cu.axel.smartdock.adapters.DockAppAdapter
 import cu.axel.smartdock.adapters.DockAppAdapter.OnDockAppClickListener
-import cu.axel.smartdock.adapters.WifiScanResultAdapter
+import cu.axel.smartdock.adapters.NotificationAdapter
+import cu.axel.smartdock.adapters.NotificationAdapter.OnNotificationClickListener
 import cu.axel.smartdock.db.DBHelper
 import cu.axel.smartdock.dialogs.DockDialog
 import cu.axel.smartdock.dialogs.NotificationPermissionDialog
-import cu.axel.smartdock.wrappers.ActivityManagerWrapper
 import cu.axel.smartdock.models.Action
 import cu.axel.smartdock.models.App
 import cu.axel.smartdock.models.AppTask
@@ -95,12 +105,15 @@ import cu.axel.smartdock.receivers.BatteryStatsReceiver
 import cu.axel.smartdock.receivers.SoundEventsReceiver
 import cu.axel.smartdock.utils.AppUtils
 import cu.axel.smartdock.utils.ColorUtils
+import cu.axel.smartdock.utils.ColorUtils.getMainColors
 import cu.axel.smartdock.utils.DeepShortcutManager
 import cu.axel.smartdock.utils.DeviceUtils
 import cu.axel.smartdock.utils.IconPackUtils
 import cu.axel.smartdock.utils.OnSwipeListener
 import cu.axel.smartdock.utils.Utils
 import cu.axel.smartdock.widgets.HoverInterceptorLayout
+import cu.axel.smartdock.wrappers.ActivityManagerWrapper
+import cu.axel.smartdock.wrappers.BluetoothManagerWrapper
 import cu.axel.smartdock.wrappers.WifiManagerWrapper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -109,19 +122,21 @@ import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import java.io.UnsupportedEncodingException
 import java.net.URLEncoder
-import java.util.concurrent.Executors
 
 const val DOCK_SERVICE_CONNECTED = "service_connected"
-const val ACTION_TAKE_SCREENSHOT = "take_screenshot"
+const val ACTION_BIND_NOTIFICATION_SERVICE = "bind_notification_service"
 const val ACTION_LAUNCH_APP = "launch_app"
 const val DESKTOP_APP_PINNED = "desktop_app_pinned"
 const val DOCK_SERVICE_ACTION = "dock_service_action"
 
 class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, OnTouchListener,
-    OnAppClickListener, OnDockAppClickListener {
+    OnAppClickListener, OnDockAppClickListener, OnNotificationClickListener {
 
+    private var bluetoothButton: ImageView? = null
+    private var wifiButton: ImageView? = null
+    private var notificationsLv: RecyclerView? = null
     private var wifiManagerWrapper: WifiManagerWrapper? = null
-    private var wifiList: ListView? = null
+    private var bluetoothManagerWrapper: BluetoothManagerWrapper? = null
     private var activityManagerWrapper: ActivityManagerWrapper? = null
     private var orientationValue: String = ""
     private var orientation = -1
@@ -146,8 +161,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private var appMenu: LinearLayout? = null
     private lateinit var searchLayout: LinearLayout
     private var powerMenu: LinearLayout? = null
-    private var audioPanel: LinearLayout? = null
-    private var wifiPanel: LinearLayout? = null
+    private var quickSettingsPanel: LinearLayout? = null
     private lateinit var searchEntry: LinearLayout
     private lateinit var dockLayout: RelativeLayout
     private lateinit var windowManager: WindowManager
@@ -155,8 +169,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private var appMenuVisible = false
     private var powerMenuVisible = false
     private var isPinned = false
-    private var audioPanelVisible = false
-    private var wifiPanelVisible = false
+    private var quickSettingsPanelVisible = false
     private var systemApp = false
     private var preferSecondaryDisplay = false
     private lateinit var dockLayoutParams: WindowManager.LayoutParams
@@ -186,6 +199,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private lateinit var displayListener: DisplayManager.DisplayListener
     private lateinit var keyguardManager: KeyguardManager
     private var iconPackUtils: IconPackUtils? = null
+    private var notificationBridge: INotificationServiceBridge? = null
+    private lateinit var statusArea: LinearLayout
     override fun onCreate() {
         super.onCreate()
         db = DBHelper(this)
@@ -214,6 +229,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private fun destroyWrappers() {
         activityManagerWrapper = null
         wifiManagerWrapper = null
+        bluetoothManagerWrapper = null
     }
 
     private fun initWrappers() {
@@ -221,6 +237,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             try {
                 activityManagerWrapper = ActivityManagerWrapper()
                 wifiManagerWrapper = WifiManagerWrapper()
+                bluetoothManagerWrapper = BluetoothManagerWrapper()
             } catch (e: Exception) {
                 Log.e(packageName, e.toString())
             }
@@ -261,18 +278,9 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             this, object : BroadcastReceiver() {
                 override fun onReceive(p1: Context, intent: Intent) {
                     when (intent.getStringExtra("action")) {
-                        NOTIFICATION_COUNT_CHANGED -> {
-                            val count = intent.getIntExtra("count", 0)
-                            if (count > 0) {
-                                notificationBtn.setBackgroundResource(R.drawable.circle)
-                                notificationBtn.text = count.toString()
-                            } else {
-                                notificationBtn.setBackgroundResource(R.drawable.ic_expand_up_circle)
-                                notificationBtn.text = ""
-                            }
+                        NOTIFICATION_SERVICE_CONNECTED -> {
+                            bindNotificationService()
                         }
-
-                        ACTION_TAKE_SCREENSHOT -> takeScreenshot()
                     }
                 }
             }, IntentFilter(NOTIFICATION_SERVICE_ACTION),
@@ -342,15 +350,22 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
-        wifiManager.registerScanResultsCallback(Executors.newSingleThreadExecutor(), object :
-            WifiManager.ScanResultsCallback() {
-            override fun onScanResultsAvailable() {
-                CoroutineScope(Dispatchers.Main).launch {
-                    if (wifiPanelVisible)
-                        updateWifiPanel()
-                }
+        ContextCompat.registerReceiver(this, object : BroadcastReceiver() {
+            override fun onReceive(p0: Context?, p1: Intent?) {
+                updateWiFiStatus()
             }
-        })
+
+        }, IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
+
+        ContextCompat.registerReceiver(this, object : BroadcastReceiver() {
+            override fun onReceive(p0: Context?, p1: Intent?) {
+                updateBluetoothStatus()
+            }
+
+        }, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+
+
+        bindNotificationService()
 
         //Play startup sound
         DeviceUtils.playEventSound(this, "startup_sound")
@@ -882,8 +897,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         //Hack to ensure the launched app is already on the top of the stack
         dockHandler.postDelayed({ updateRunningTasks() }, 1200)
 
-        if (Utils.notificationPanelVisible)
-            toggleNotificationPanel(false)
+        if (quickSettingsPanelVisible)
+            hideQuickSettingsPanel()
     }
 
     private fun setOrientation() {
@@ -1493,11 +1508,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             adapter.updateApps(apps)
         else
             tasksGv.adapter = DockAppAdapter(context, apps, this, iconPackUtils)
-        //TODO: Move context outta here
-        wifiBtn.setImageResource(if (wifiManager.isWifiEnabled) R.drawable.ic_wifi_on else R.drawable.ic_wifi_off)
-        val bluetoothAdapter = bluetoothManager.adapter
-        if (bluetoothAdapter != null)
-            bluetoothBtn.setImageResource(if (bluetoothAdapter.isEnabled) R.drawable.ic_bluetooth else R.drawable.ic_bluetooth_off)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -1626,75 +1636,27 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         startActivity(Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    fun showWifiPanel() {
-        val layoutParams = Utils.makeWindowParams(
-            Utils.dpToPx(context, 270), Utils.dpToPx(context, 300), context,
-            preferSecondaryDisplay
-        )
-        layoutParams.flags =
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-        layoutParams.y = Utils.dpToPx(context, 2) + dockHeight
-        layoutParams.x = Utils.dpToPx(context, 2)
-        layoutParams.gravity = Gravity.BOTTOM or Gravity.END
-        wifiPanel = LayoutInflater.from(ContextThemeWrapper(context, R.style.AppTheme_Dock))
-            .inflate(R.layout.wifi_panel, null) as LinearLayout
-        wifiPanel!!.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE
-                && (event.y < wifiPanel!!.measuredHeight || event.x < wifiPanel!!.x)
-            )
-                hideWifiPanel()
-
-            false
-        }
-        val wifiSwitch = wifiPanel!!.findViewById<MaterialSwitch>(R.id.wifi_switch)
-        wifiSwitch.isChecked = wifiManager.isWifiEnabled
-        wifiSwitch.setOnCheckedChangeListener { _, checked ->
-            wifiManagerWrapper?.setWifiEnabled(checked)
-        }
-        wifiList = wifiPanel!!.findViewById(R.id.wifi_list)
-        ColorUtils.applyMainColor(context, sharedPreferences, wifiPanel!!)
-        windowManager.addView(wifiPanel, layoutParams)
-        wifiManagerWrapper?.startScan()
-        wifiPanelVisible = true
+    private fun toggleQuickSettingsPanel(selectedTab: Int = 0) {
+        if (!quickSettingsPanelVisible)
+            showQuickSettingsPanel(selectedTab)
+        else
+            hideQuickSettingsPanel()
     }
 
-    private fun hideWifiPanel() {
-        if (wifiPanel != null) {
-            windowManager.removeView(wifiPanel)
-            wifiPanel = null
-        }
-        wifiPanelVisible = false
-    }
-
-    fun updateWifiPanel() {
-        if (wifiList == null)
-            return
-        val results = wifiManagerWrapper!!.getScanResults()
-        wifiList!!.adapter = WifiScanResultAdapter(this, results)
-    }
-
-
-    private fun toggleVolume() {
-        //TODO: Implement setting
-        //DeviceUtils.toggleVolume(context);
-        if (!audioPanelVisible) showAudioPanel() else hideAudioPanel()
-    }
-
-    private fun hideAudioPanel() {
-        windowManager.removeView(audioPanel)
-        audioPanelVisible = false
-        audioPanel = null
+    private fun hideQuickSettingsPanel() {
+        windowManager.removeView(quickSettingsPanel)
+        quickSettingsPanelVisible = false
+        quickSettingsPanel = null
+        notificationsLv = null
+        wifiButton = null
+        bluetoothButton = null
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun showAudioPanel() {
-        if (Utils.notificationPanelVisible)
-            toggleNotificationPanel(false)
-
+    private fun showQuickSettingsPanel(selectedTab: Int = 0) {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         val layoutParams = Utils.makeWindowParams(
-            Utils.dpToPx(context, 270), -2, context,
+            Utils.dpToPx(context, 400), Utils.dpToPx(context, 305), context,
             preferSecondaryDisplay
         )
         layoutParams.flags =
@@ -1702,21 +1664,29 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         layoutParams.y = Utils.dpToPx(context, 2) + dockHeight
         layoutParams.x = Utils.dpToPx(context, 2)
         layoutParams.gravity = Gravity.BOTTOM or Gravity.END
-        audioPanel = LayoutInflater.from(ContextThemeWrapper(context, R.style.AppTheme_Dock))
-            .inflate(R.layout.audio_panel, null) as LinearLayout
-        audioPanel!!.setOnTouchListener { _, event ->
+        quickSettingsPanel =
+            LayoutInflater.from(ContextThemeWrapper(context, R.style.AppTheme_Dock))
+                .inflate(R.layout.quick_settings_panel, null) as LinearLayout
+        quickSettingsPanel!!.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_OUTSIDE
-                && (event.y < audioPanel!!.measuredHeight || event.x < audioPanel!!.x)
+                && (event.y < quickSettingsPanel!!.measuredHeight || event.x < quickSettingsPanel!!.x)
             )
-                hideAudioPanel()
+                hideQuickSettingsPanel()
 
             false
         }
-        val musicIcon = audioPanel!!.findViewById<ImageView>(R.id.ap_music_icon)
-        val musicSb = audioPanel!!.findViewById<SeekBar>(R.id.ap_music_sb)
-        musicSb.max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        musicSb.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        musicSb.setOnSeekBarChangeListener(object : OnSeekBarChangeListener {
+        val tabLayout = quickSettingsPanel!!.findViewById<TabLayout>(R.id.qs_tab_layout)
+        val notificationArea =
+            quickSettingsPanel!!.findViewById<LinearLayout>(R.id.notifications_layout)
+        val quickSettingsArea =
+            quickSettingsPanel!!.findViewById<LinearLayout>(R.id.quick_settings_layout)
+        val volumeButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.volume_btn)
+        val volumeSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.volume_seekbar)
+        val brightnessButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.brightness_btn)
+        val brightnessSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.brightness_seekbar)
+        volumeSeekbar.max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        volumeSeekbar.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        volumeSeekbar.setOnSeekBarChangeListener(object : OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
             }
@@ -1724,10 +1694,169 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             override fun onStartTrackingTouch(p1: SeekBar) {}
             override fun onStopTrackingTouch(p1: SeekBar) {}
         })
-        ColorUtils.applySecondaryColor(context, sharedPreferences, musicIcon)
-        ColorUtils.applyMainColor(context, sharedPreferences, audioPanel!!)
-        windowManager.addView(audioPanel, layoutParams)
-        audioPanelVisible = true
+
+        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(p0: TabLayout.Tab?) {
+                notificationArea.isVisible = p0!!.position == 0
+                quickSettingsArea.isVisible = p0.position == 1
+            }
+
+            override fun onTabUnselected(p0: TabLayout.Tab?) {
+
+            }
+
+            override fun onTabReselected(p0: TabLayout.Tab?) {
+
+            }
+
+        })
+        tabLayout.selectTab(tabLayout.getTabAt(selectedTab))
+        ColorUtils.applySecondaryColor(context, sharedPreferences, volumeButton)
+        wifiButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.wifi_btn)
+        val wifiTile = quickSettingsPanel!!.findViewById<LinearLayout>(R.id.wifi_tile)
+        val wifiSSIDTv = quickSettingsPanel!!.findViewById<TextView>(R.id.wifi_ssid_tv)
+        bluetoothButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.bluetooth_btn)
+        val bluetoothTile = quickSettingsPanel!!.findViewById<LinearLayout>(R.id.bluetooth_tile)
+        val notificationsBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.notifications_btn)
+        val orientationBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.btn_orientation)
+        val touchModeBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.btn_touch_mode)
+        val screenshotBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.btn_screenshot)
+        val screencapBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.btn_screencast)
+        val settingsBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.btn_settings)
+        wifiButton!!.setOnClickListener {
+            if (DeviceUtils.hasShizukuPermission() && wifiManagerWrapper?.isAlive() == true)
+                wifiManagerWrapper?.setWifiEnabled(!wifiManager.isWifiEnabled)
+            else {
+                showSystemWiFiPanel()
+                hideQuickSettingsPanel()
+            }
+        }
+        wifiTile.setOnClickListener {
+            showSystemWiFiPanel()
+            hideQuickSettingsPanel()
+        }
+
+        bluetoothButton?.setOnClickListener {
+            if (DeviceUtils.hasShizukuPermission() && bluetoothManagerWrapper?.isAlive() == true)
+                bluetoothManagerWrapper?.setBluetoothEnabled(!bluetoothManager.adapter.isEnabled)
+            else {
+                openBluetoothSettings()
+            }
+        }
+        bluetoothTile.setOnClickListener {
+            openBluetoothSettings()
+        }
+        //ColorUtils.applyMainColor(context, sharedPreferences, wifiButton)
+
+        notificationsLv = quickSettingsPanel!!.findViewById(R.id.notification_lv)
+
+        ColorUtils.applySecondaryColor(context, sharedPreferences, wifiTile)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, bluetoothTile)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, brightnessButton)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, notificationsBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, orientationBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, touchModeBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, screencapBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, screenshotBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, settingsBtn)
+        touchModeBtn.setOnClickListener {
+            hideQuickSettingsPanel()
+            if (sharedPreferences.getBoolean("tablet_mode", false)) {
+                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), false)
+                sharedPreferences.edit {
+                    putBoolean("app_menu_fullscreen", false)
+                    putBoolean("tablet_mode", false)
+                }
+                Toast.makeText(context, R.string.tablet_mode_off, Toast.LENGTH_SHORT).show()
+            } else {
+                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), true)
+                sharedPreferences.edit {
+                    putBoolean("app_menu_fullscreen", true)
+                    putBoolean("tablet_mode", true)
+                }
+                Toast.makeText(context, R.string.tablet_mode_on, Toast.LENGTH_SHORT).show()
+            }
+        }
+        orientationBtn.setImageResource(
+            if (sharedPreferences.getBoolean(
+                    "lock_landscape",
+                    true
+                )
+            ) R.drawable.ic_screen_rotation_off else R.drawable.ic_screen_rotation_on
+        )
+        orientationBtn.setOnClickListener {
+            sharedPreferences.edit {
+                putBoolean("lock_landscape", !sharedPreferences.getBoolean("lock_landscape", true))
+            }
+            orientationBtn
+                .setImageResource(
+                    if (sharedPreferences.getBoolean(
+                            "lock_landscape",
+                            true
+                        )
+                    ) R.drawable.ic_screen_rotation_off else R.drawable.ic_screen_rotation_on
+                )
+        }
+        screenshotBtn.setOnClickListener {
+            hideQuickSettingsPanel()
+            takeScreenshot()
+        }
+        screencapBtn.setOnClickListener {
+            hideQuickSettingsPanel()
+            launchApp("standard", sharedPreferences.getString("app_rec", "")!!)
+        }
+        settingsBtn.setOnClickListener {
+            hideQuickSettingsPanel()
+            launchApp("standard", packageName)
+        }
+        notificationsBtn.setImageResource(
+            if (sharedPreferences.getBoolean(
+                    "show_notifications",
+                    true
+                )
+            ) R.drawable.ic_notifications else R.drawable.ic_notifications_off
+        )
+        notificationsBtn.setOnClickListener {
+            val showNotifications = sharedPreferences.getBoolean("show_notifications", true)
+            sharedPreferences.edit { putBoolean("show_notifications", !showNotifications) }
+            notificationsBtn.setImageResource(
+                if (!showNotifications) R.drawable.ic_notifications else R.drawable.ic_notifications_off
+            )
+            if (showNotifications) Toast.makeText(
+                context,
+                R.string.popups_disabled,
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        ColorUtils.applyMainColor(context, sharedPreferences, quickSettingsPanel!!)
+        windowManager.addView(quickSettingsPanel, layoutParams)
+        quickSettingsPanelVisible = true
+        updateNotificationArea()
+        updateWiFiStatus()
+        updateBluetoothStatus()
+    }
+
+    private fun updateNotificationArea() {
+        if (notificationBridge?.notifications != null) {
+            val ignoredApps =
+                sharedPreferences.getStringSet("ignored_notifications_panel", setOf())!!
+            val notifications =
+                notificationBridge?.notifications!!.filterNot { ignoredApps.contains(it.packageName) }
+                    .sortedWith(
+                        compareByDescending { AppUtils.isMediaNotification(it.notification) && it.isOngoing })
+                    .toTypedArray<StatusBarNotification>()
+            var adapter = notificationsLv!!.adapter
+            if (adapter is NotificationAdapter)
+                adapter.updateNotifications(notifications)
+            else {
+                adapter = NotificationAdapter(
+                    context,
+                    notifications,
+                    this
+                )
+                notificationsLv!!.adapter = adapter
+            }
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1796,11 +1925,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         ColorUtils.applySecondaryColor(context, sharedPreferences, recentBtn)
         ColorUtils.applySecondaryColor(context, sharedPreferences, assistBtn)
         ColorUtils.applySecondaryColor(context, sharedPreferences, pinBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, bluetoothBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, wifiBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, volumeBtn)
         ColorUtils.applySecondaryColor(context, sharedPreferences, powerBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, batteryBtn)
+        ColorUtils.applySecondaryColor(context, sharedPreferences, statusArea)
     }
 
     private fun updateCorners() {
@@ -1829,20 +1955,13 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     private fun updateBatteryBtn() {
-        val xP = Utils.dpToPx(context, 6)
-        val yP = Utils.dpToPx(context, 5)
         if (sharedPreferences.getBoolean("show_battery_level$orientationValue", false)) {
-            batteryBtn.setPadding(yP)
-            batteryBtn.setBackgroundResource(R.drawable.round_rect)
             batteryReceiver.showLevel = true
             batteryBtn.text = "${batteryReceiver.level}%"
         } else {
-            batteryBtn.setPadding(xP, yP, xP, yP)
-            batteryBtn.setBackgroundResource(R.drawable.circle)
             batteryReceiver.showLevel = false
             batteryBtn.text = ""
         }
-        ColorUtils.applySecondaryColor(context, sharedPreferences, batteryBtn)
     }
 
     private fun toggleFavorites(visible: Boolean) {
@@ -1906,17 +2025,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dockLayout.background.alpha = alpha
     }
 
-    private fun toggleNotificationPanel(show: Boolean) {
-        sendBroadcast(
-            Intent(DOCK_SERVICE_ACTION)
-                .setPackage(packageName)
-                .putExtra(
-                    "action",
-                    if (show) ACTION_SHOW_NOTIFICATION_PANEL else ACTION_HIDE_NOTIFICATION_PANEL
-                )
-        )
-    }
-
     override fun onTouch(view: View, motionEvent: MotionEvent): Boolean {
         gestureDetector.onTouchEvent(motionEvent)
         return false
@@ -1932,6 +2040,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         if (::displayListener.isInitialized && ::displayManager.isInitialized)
             displayManager.unregisterDisplayListener(displayListener)
         removeAllViews()
+        unbindService(notificationServiceConnection)
         super.onDestroy()
     }
 
@@ -1979,6 +2088,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         assistBtn = dock!!.findViewById(R.id.assist_btn)
         notificationBtn = dock!!.findViewById(R.id.notifications_btn)
         pinBtn = dock!!.findViewById(R.id.pin_btn)
+        statusArea = dock!!.findViewById(R.id.status_area)
         bluetoothBtn = dock!!.findViewById(R.id.bluetooth_btn)
         wifiBtn = dock!!.findViewById(R.id.wifi_btn)
         volumeBtn = dock!!.findViewById(R.id.volume_btn)
@@ -2035,45 +2145,15 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         notificationBtn.setOnClickListener {
             if (sharedPreferences.getBoolean("enable_notif_panel", true)) {
                 if (DeviceUtils.isServiceRunning(this, NotificationService::class.java)) {
-                    if (audioPanelVisible)
-                        hideAudioPanel()
-                    toggleNotificationPanel(!Utils.notificationPanelVisible)
+                    toggleQuickSettingsPanel()
                 } else {
                     NotificationPermissionDialog(this, true)
                 }
             } else performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
         }
         pinBtn.setOnClickListener { togglePin() }
-        bluetoothBtn.setOnClickListener {
-            openBluetoothSettings()
-        }
-        bluetoothBtn.setOnLongClickListener {
-            openBluetoothSettings()
-            true
-        }
-        wifiBtn.setOnClickListener {
-            if (DeviceUtils.hasShizukuPermission() && wifiManagerWrapper?.isAlive() == true) {
-                if (!wifiPanelVisible)
-                    showWifiPanel()
-                else
-                    hideWifiPanel()
-            } else
-                showSystemWiFiPanel()
-        }
-        wifiBtn.setOnLongClickListener {
-            openWiFiSettings()
-            true
-        }
-        volumeBtn.setOnClickListener { toggleVolume() }
-        volumeBtn.setOnLongClickListener {
-            startActivity(Intent(Settings.Panel.ACTION_VOLUME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            true
-        }
-        batteryBtn.setOnClickListener {
-            launchApp(
-                null, null,
-                Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
-            )
+        statusArea.setOnClickListener {
+            toggleQuickSettingsPanel(1)
         }
         dateTv.setOnClickListener {
             launchApp(
@@ -2137,6 +2217,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         windowManager.addView(bottomRightCorner, cornersLayoutParams)
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun createAppMenu() {
         appMenu = LayoutInflater.from(ContextThemeWrapper(context, R.style.AppTheme_Dock))
             .inflate(R.layout.apps_menu, null) as LinearLayout
@@ -2240,15 +2321,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     private fun restartUI() {
-        //Notify the notification service about an UI restart
-        sendBroadcast(
-            Intent(DOCK_SERVICE_ACTION)
-                .setPackage(packageName)
-                .putExtra(
-                    "action",
-                    ACTION_RECREATE_NOTIFICATION_VIEWS
-                )
-        )
         removeAllViews()
         createViews()
         updateBatteryBtn()
@@ -2268,6 +2340,42 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dialog.setCancelable(false)
         dialog.show()
         sharedPreferences.edit { putBoolean("first_hide", false) }
+    }
+
+    private fun updateWiFiStatus() {
+        val wifiIcon = AppCompatResources.getDrawable(this, R.drawable.ic_wifi_on)!!
+        val enabled = wifiManager.isWifiEnabled
+        if (quickSettingsPanelVisible) {
+            if (enabled) {
+                wifiIcon.setColorFilter(
+                    getMainColors(sharedPreferences, context)[0],
+                    PorterDuff.Mode.SRC_ATOP
+                )
+                ColorUtils.applyColor(wifiButton!!, getColor(R.color.action))
+            } else {
+                ColorUtils.applyMainColor(context, sharedPreferences, wifiButton!!)
+            }
+            wifiButton?.setImageDrawable(wifiIcon)
+        }
+        wifiBtn.setImageResource(if (enabled) R.drawable.ic_wifi_on else R.drawable.ic_wifi_off)
+    }
+
+    private fun updateBluetoothStatus() {
+        val bluetoothIcon = AppCompatResources.getDrawable(this, R.drawable.ic_bluetooth)!!
+        val enabled = bluetoothManager.adapter?.isEnabled ?: false
+        if (quickSettingsPanelVisible) {
+            if (enabled) {
+                bluetoothIcon.setColorFilter(
+                    getMainColors(sharedPreferences, context)[0],
+                    PorterDuff.Mode.SRC_ATOP
+                )
+                ColorUtils.applyColor(bluetoothButton!!, getColor(R.color.action))
+            } else {
+                ColorUtils.applyMainColor(context, sharedPreferences, bluetoothButton!!)
+            }
+            bluetoothButton?.setImageDrawable(bluetoothIcon)
+        }
+        bluetoothBtn.setImageResource(if (enabled) R.drawable.ic_bluetooth else R.drawable.ic_bluetooth_off)
     }
 
     private fun removeAllViews() {
@@ -2300,6 +2408,101 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 }, sharedPreferences.getString("hot_corners_delay", "300")!!.toInt().toLong())
             }
             return false
+        }
+    }
+
+    private fun bindNotificationService() {
+        if (notificationBridge != null)
+            return
+        bindService(
+            Intent(
+                this,
+                NotificationService::class.java
+            ).setAction(ACTION_BIND_NOTIFICATION_SERVICE), notificationServiceConnection,
+            BIND_AUTO_CREATE
+        )
+    }
+
+    private val notificationServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(
+            p0: ComponentName?,
+            p1: IBinder?
+        ) {
+            notificationBridge = INotificationServiceBridge.Stub.asInterface(p1)
+            notificationBridge?.registerCallback(object : INotificationCallback.Stub() {
+                override fun onNotificationPosted(sbn: StatusBarNotification?) {
+                    if (quickSettingsPanelVisible)
+                        updateNotificationArea()
+                    updateNotificationCount()
+                }
+
+                override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+                    if (quickSettingsPanelVisible)
+                        updateNotificationArea()
+                    updateNotificationCount()
+                }
+
+            })
+        }
+
+        override fun onServiceDisconnected(p0: ComponentName?) {
+            notificationBridge = null
+        }
+
+    }
+
+    override fun onNotificationClicked(sbn: StatusBarNotification, item: View) {
+        val notification = sbn.notification
+        if (notification.contentIntent != null) {
+            try {
+                notification.contentIntent.send()
+                if (sbn.isClearable)
+                    notificationBridge?.mCancelNotification(sbn.key)
+            } catch (_: CanceledException) {
+            }
+        }
+    }
+
+    override fun onNotificationLongClicked(notification: StatusBarNotification, item: View) {
+        item.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        val dialog = DockDialog(context, true)
+        dialog.setTitle(R.string.hide_notifications)
+        dialog.setMessage(R.string.hide_notification_panel)
+        dialog.setNegativeButton(R.string.cancel, null)
+        dialog.setPositiveButton(
+            R.string.hide
+        ) { dialog, which ->
+            val savedApps = sharedPreferences.getStringSet(
+                "ignored_notifications_panel",
+                setOf()
+            )!!
+            val ignoredApps = mutableSetOf<String>()
+            ignoredApps.addAll(savedApps)
+            ignoredApps.add(notification.packageName)
+            Toast.makeText(this, ignoredApps.toString(), Toast.LENGTH_LONG).show()
+            sharedPreferences.edit { putStringSet("ignored_notifications_panel", ignoredApps) }
+            Toast.makeText(
+                this@DockService,
+                R.string.silenced_notifications,
+                Toast.LENGTH_LONG
+            )
+                .show()
+        }
+        dialog.show()
+    }
+
+    override fun onNotificationCancelClicked(notification: StatusBarNotification, item: View) {
+        notificationBridge?.mCancelNotification(notification.key)
+    }
+
+    private fun updateNotificationCount() {
+        val count = notificationBridge?.notificationCount ?: 0
+        if (count > 0) {
+            notificationBtn.setBackgroundResource(R.drawable.circle)
+            notificationBtn.text = count.toString()
+        } else {
+            notificationBtn.setBackgroundResource(R.drawable.ic_expand_up_circle)
+            notificationBtn.text = ""
         }
     }
 }

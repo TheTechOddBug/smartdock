@@ -2,58 +2,44 @@ package cu.axel.smartdock.services
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.PendingIntent.CanceledException
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.util.Log
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.view.ContextThemeWrapper
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.preference.PreferenceManager
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.divider.MaterialDividerItemDecoration
+import cu.axel.smartdock.INotificationCallback
+import cu.axel.smartdock.INotificationServiceBridge
 import cu.axel.smartdock.R
-import cu.axel.smartdock.activities.LAUNCHER_ACTION
-import cu.axel.smartdock.adapters.NotificationAdapter
-import cu.axel.smartdock.adapters.NotificationAdapter.OnNotificationClickListener
-import cu.axel.smartdock.dialogs.DockDialog
 import cu.axel.smartdock.utils.AppUtils
 import cu.axel.smartdock.utils.ColorUtils
 import cu.axel.smartdock.utils.DeviceUtils
 import cu.axel.smartdock.utils.Utils
 
-const val ACTION_HIDE_NOTIFICATION_PANEL = "hide_panel"
-const val ACTION_SHOW_NOTIFICATION_PANEL = "show_panel"
-const val ACTION_RECREATE_NOTIFICATION_VIEWS = "recreate_notification_views"
-const val NOTIFICATION_COUNT_CHANGED = "count_changed"
+const val NOTIFICATION_SERVICE_CONNECTED = "notification_service_connected"
 const val NOTIFICATION_SERVICE_ACTION = "notification_service_action"
 
-class NotificationService : NotificationListenerService(), OnNotificationClickListener,
+class NotificationService : NotificationListenerService(),
     SharedPreferences.OnSharedPreferenceChangeListener {
     private lateinit var windowManager: WindowManager
     private lateinit var notificationLayout: LinearLayout
@@ -63,197 +49,188 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
     private lateinit var notificationCloseBtn: ImageView
     private lateinit var handler: Handler
     private lateinit var sharedPreferences: SharedPreferences
-    private var notificationPanel: View? = null
-    private var notificationsLv: RecyclerView? = null
-    private var cancelAllBtn: ImageButton? = null
     private lateinit var notificationActionsLayout: LinearLayout
     private lateinit var context: Context
-    private var notificationArea: LinearLayout? = null
     private var preferSecondaryDisplay = false
     private var y = 0
     private var margins = 0
     private var dockHeight: Int = 0
     private lateinit var notificationLayoutParams: WindowManager.LayoutParams
     private var actionsHeight = 0
+    private var notificationsCallback: INotificationCallback? = null
+
     override fun onCreate() {
         super.onCreate()
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         handler = Handler(Looper.getMainLooper())
-        val dockReceiver = DockServiceReceiver()
-        ContextCompat.registerReceiver(
-            this,
-            dockReceiver,
-            IntentFilter(DOCK_SERVICE_ACTION),
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
         createViews()
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        updateNotificationCount()
+        sendBroadcast(
+            Intent(NOTIFICATION_SERVICE_ACTION)
+                .setPackage(packageName)
+                .putExtra("action", NOTIFICATION_SERVICE_CONNECTED)
+        )
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         super.onNotificationRemoved(sbn)
-        updateNotificationCount()
-        if (Utils.notificationPanelVisible)
-            updateNotificationPanel()
+        notificationsCallback?.onNotificationRemoved(sbn)
     }
 
+    @SuppressLint("UseCompatLoadingForDrawables")
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         super.onNotificationPosted(sbn)
-        updateNotificationCount()
-        if (Utils.notificationPanelVisible) {
-            updateNotificationPanel()
-        } else {
-            if (sharedPreferences.getBoolean("show_notifications", true)) {
-                val notification = sbn.notification
-                if ((sbn.isOngoing && !sharedPreferences.getBoolean(
-                        "show_ongoing",
-                        false
-                    )) || (sbn.packageName == AppUtils.currentApp && sharedPreferences.getBoolean(
-                        "silence_current",
-                        true
-                    )) || notification.contentView != null || isBlackListed(sbn.packageName)
-                )
-                    return
-                val extras = notification.extras
-                var notificationTitle = extras.getString(Notification.EXTRA_TITLE)
-                if (notificationTitle == null) notificationTitle =
-                    AppUtils.getPackageLabel(context, sbn.packageName)
-                val notificationText = extras.getCharSequence(Notification.EXTRA_TEXT)
-                ColorUtils.applyMainColor(
-                    this@NotificationService,
-                    sharedPreferences,
-                    notificationLayout
-                )
+        notificationsCallback?.onNotificationPosted(sbn)
 
-                if (AppUtils.isMediaNotification(notification) && notification.getLargeIcon() != null) {
-                    val padding = Utils.dpToPx(context, 0)
-                    notificationIconIv.setPadding(padding, padding, padding, padding)
-                    notificationIconIv.setImageIcon(notification.getLargeIcon())
-                    notificationIconIv.background = null
-                } else {
-                    notification.smallIcon.setTint(Color.WHITE)
-                    notificationIconIv.setBackgroundResource(R.drawable.circle)
-                    ColorUtils.applySecondaryColor(
-                        context, sharedPreferences,
-                        notificationIconIv
-                    )
-                    val padding = Utils.dpToPx(context, 14)
-                    notificationIconIv.setPadding(padding, padding, padding, padding)
-                    notificationIconIv.setImageIcon(notification.smallIcon)
-                }
+        if (sharedPreferences.getBoolean("show_notifications", true)) {
+            val notification = sbn.notification
+            if ((sbn.isOngoing && !sharedPreferences.getBoolean(
+                    "show_ongoing",
+                    false
+                )) || (sbn.packageName == AppUtils.currentApp && sharedPreferences.getBoolean(
+                    "silence_current",
+                    true
+                )) || notification.contentView != null || isBlackListed(sbn.packageName)
+            )
+                return
+            val extras = notification.extras
+            var notificationTitle = extras.getString(Notification.EXTRA_TITLE)
+            if (notificationTitle == null) notificationTitle =
+                AppUtils.getPackageLabel(context, sbn.packageName)
+            val notificationText = extras.getCharSequence(Notification.EXTRA_TEXT)
+            ColorUtils.applyMainColor(
+                this@NotificationService,
+                sharedPreferences,
+                notificationLayout
+            )
 
-                val progress = extras.getInt(Notification.EXTRA_PROGRESS)
-                val p = if (progress != 0) " $progress%" else ""
-                notificationTitleTv.text = notificationTitle + p
-                notificationTextTv.text = notificationText
-                val actions = notification.actions
-                notificationActionsLayout.removeAllViews()
-                if (actions != null) {
-                    val actionLayoutParams = LinearLayout.LayoutParams(0, actionsHeight)
-                    actionLayoutParams.weight = 1f
-                    if (AppUtils.isMediaNotification(notification)) {
-                        for (action in actions) {
-                            val actionIv = ImageView(this@NotificationService)
-                            try {
-                                val resources = packageManager
-                                    .getResourcesForApplication(sbn.packageName)
-                                val drawable = resources.getDrawable(
-                                    resources.getIdentifier(
-                                        action.icon.toString() + "",
-                                        "drawable",
-                                        sbn.packageName
-                                    )
+            if (AppUtils.isMediaNotification(notification) && notification.getLargeIcon() != null) {
+                val padding = Utils.dpToPx(context, 0)
+                notificationIconIv.setPadding(padding, padding, padding, padding)
+                notificationIconIv.setImageIcon(notification.getLargeIcon())
+                notificationIconIv.background = null
+            } else {
+                notification.smallIcon.setTint(Color.WHITE)
+                notificationIconIv.setBackgroundResource(R.drawable.circle)
+                ColorUtils.applySecondaryColor(
+                    context, sharedPreferences,
+                    notificationIconIv
+                )
+                val padding = Utils.dpToPx(context, 14)
+                notificationIconIv.setPadding(padding, padding, padding, padding)
+                notificationIconIv.setImageIcon(notification.smallIcon)
+            }
+
+            val progress = extras.getInt(Notification.EXTRA_PROGRESS)
+            val p = if (progress != 0) " $progress%" else ""
+            notificationTitleTv.text = notificationTitle + p
+            notificationTextTv.text = notificationText
+            val actions = notification.actions
+            notificationActionsLayout.removeAllViews()
+            if (actions != null) {
+                val actionLayoutParams = LinearLayout.LayoutParams(0, actionsHeight)
+                actionLayoutParams.weight = 1f
+                if (AppUtils.isMediaNotification(notification)) {
+                    for (action in actions) {
+                        val actionIv = ImageView(this@NotificationService)
+                        try {
+                            val resources = packageManager
+                                .getResourcesForApplication(sbn.packageName)
+                            val drawable = resources.getDrawable(
+                                resources.getIdentifier(
+                                    action.icon.toString() + "",
+                                    "drawable",
+                                    sbn.packageName
                                 )
-                                drawable.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP)
-                                actionIv.setImageDrawable(drawable)
-                                actionIv.setOnClickListener {
-                                    try {
-                                        action.actionIntent.send()
-                                    } catch (_: CanceledException) {
-                                    }
-                                }
-                                notificationTextTv.isSingleLine = true
-                                notificationActionsLayout.addView(actionIv, actionLayoutParams)
-                            } catch (_: PackageManager.NameNotFoundException) {
-                            }
-                        }
-                    } else {
-                        for (action in actions) {
-                            val actionTv = TextView(context)
-                            actionTv.isSingleLine = true
-                            actionTv.text = action.title
-                            actionTv.setTextColor(getColor(R.color.action))
-                            actionTv.setOnClickListener {
+                            )
+                            drawable.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP)
+                            actionIv.setImageDrawable(drawable)
+                            actionIv.setOnClickListener {
                                 try {
                                     action.actionIntent.send()
-                                    notificationLayout.visibility = View.GONE
-                                    notificationLayout.alpha = 0f
                                 } catch (_: CanceledException) {
                                 }
                             }
-                            notificationActionsLayout.addView(actionTv, actionLayoutParams)
+                            notificationTextTv.isSingleLine = true
+                            notificationActionsLayout.addView(actionIv, actionLayoutParams)
+                        } catch (_: PackageManager.NameNotFoundException) {
                         }
                     }
-                }
-                notificationCloseBtn.setOnClickListener {
-                    notificationLayout.visibility = View.GONE
-                    if (sbn.isClearable)
-                        cancelNotification(sbn.key)
-                }
-                notificationLayout.setOnClickListener {
-                    notificationLayout.visibility = View.GONE
-                    notificationLayout.alpha = 0f
-                    val intent = notification.contentIntent
-                    if (intent != null) {
-                        try {
-                            intent.send()
-                            if (sbn.isClearable) cancelNotification(sbn.key)
-                        } catch (_: CanceledException) {
+                } else {
+                    for (action in actions) {
+                        val actionTv = TextView(context)
+                        actionTv.isSingleLine = true
+                        actionTv.text = action.title
+                        actionTv.setTextColor(getColor(R.color.action))
+                        actionTv.setOnClickListener {
+                            try {
+                                action.actionIntent.send()
+                                notificationLayout.visibility = View.GONE
+                                notificationLayout.alpha = 0f
+                            } catch (_: CanceledException) {
+                            }
                         }
+                        notificationActionsLayout.addView(actionTv, actionLayoutParams)
                     }
                 }
-                notificationLayout.setOnLongClickListener {
-                    val savedApps = sharedPreferences.getStringSet(
-                        "ignored_notifications_popups",
-                        setOf()
-                    )!!
-                    val ignoredApps = mutableSetOf<String>()
-                    ignoredApps.addAll(savedApps)
-                    ignoredApps.add(sbn.packageName)
-
-                    sharedPreferences.edit {
-                        putStringSet("ignored_notifications_popups", ignoredApps)
-                    }
-                    notificationLayout.visibility = View.GONE
-                    notificationLayout.alpha = 0f
-                    Toast.makeText(
-                        this@NotificationService,
-                        R.string.silenced_notifications,
-                        Toast.LENGTH_LONG
-                    )
-                        .show()
-                    if (sbn.isClearable) cancelNotification(sbn.key)
-                    true
-                }
-                notificationLayout.animate().alpha(1f).setDuration(300)
-                    .setInterpolator(AccelerateDecelerateInterpolator())
-                    .setListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationStart(animation: Animator) {
-                            notificationLayout.visibility = View.VISIBLE
-                        }
-                    })
-                if (sharedPreferences.getBoolean(
-                        "enable_notification_sound",
-                        false
-                    )
-                ) DeviceUtils.playEventSound(this, "notification_sound")
-                hideNotification()
             }
+            notificationCloseBtn.setOnClickListener {
+                notificationLayout.visibility = View.GONE
+                if (sbn.isClearable)
+                    cancelNotification(sbn.key)
+            }
+            notificationLayout.setOnClickListener {
+                notificationLayout.visibility = View.GONE
+                notificationLayout.alpha = 0f
+                val intent = notification.contentIntent
+                if (intent != null) {
+                    try {
+                        intent.send()
+                        if (sbn.isClearable) cancelNotification(sbn.key)
+                    } catch (_: CanceledException) {
+                    }
+                }
+            }
+            notificationLayout.setOnLongClickListener {
+                val savedApps = sharedPreferences.getStringSet(
+                    "ignored_notifications_popups",
+                    setOf()
+                )!!
+                val ignoredApps = mutableSetOf<String>()
+                ignoredApps.addAll(savedApps)
+                ignoredApps.add(sbn.packageName)
+
+                sharedPreferences.edit {
+                    putStringSet("ignored_notifications_popups", ignoredApps)
+                }
+                notificationLayout.visibility = View.GONE
+                notificationLayout.alpha = 0f
+                Toast.makeText(
+                    this@NotificationService,
+                    R.string.silenced_notifications,
+                    Toast.LENGTH_LONG
+                )
+                    .show()
+                if (sbn.isClearable) cancelNotification(sbn.key)
+                true
+            }
+            notificationLayout.animate().alpha(1f).setDuration(300)
+                .setInterpolator(AccelerateDecelerateInterpolator())
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationStart(animation: Animator) {
+                        notificationLayout.visibility = View.VISIBLE
+                    }
+                })
+            if (sharedPreferences.getBoolean(
+                    "enable_notification_sound",
+                    false
+                )
+            ) DeviceUtils.playEventSound(this, "notification_sound")
+            hideNotification()
         }
     }
 
@@ -274,250 +251,6 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
         val ignoredPackages =
             sharedPreferences.getStringSet("ignored_notifications_popups", setOf("android"))
         return ignoredPackages!!.contains(packageName)
-    }
-
-    private fun updateNotificationCount() {
-        var count = 0
-        var cancelableCount = 0
-        val notifications = activeNotifications
-        for (notification in notifications) {
-            if (notification != null && notification.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0) {
-                count++
-                if (notification.isClearable) cancelableCount++
-            }
-            if (Utils.notificationPanelVisible) cancelAllBtn!!.visibility =
-                if (cancelableCount > 0) View.VISIBLE else View.INVISIBLE
-        }
-        sendBroadcast(
-            Intent(NOTIFICATION_SERVICE_ACTION)
-                .setPackage(packageName)
-                .putExtra("action", NOTIFICATION_COUNT_CHANGED)
-                .putExtra("count", count)
-        )
-    }
-
-    fun showNotificationPanel() {
-        val layoutParams = Utils.makeWindowParams(
-            Utils.dpToPx(context, 400), -2, context,
-            preferSecondaryDisplay
-        )
-        layoutParams.gravity = Gravity.BOTTOM or Gravity.END
-        layoutParams.y = y
-        layoutParams.x = margins
-        layoutParams.flags =
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-        notificationPanel = LayoutInflater.from(context).inflate(R.layout.notification_panel, null)
-        cancelAllBtn = notificationPanel!!.findViewById(R.id.cancel_all_n_btn)
-        notificationsLv = notificationPanel!!.findViewById(R.id.notification_lv)
-        notificationsLv!!.layoutManager =
-            LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false)
-        notificationArea = notificationPanel!!.findViewById(R.id.notification_area)
-        val qsArea = notificationPanel!!.findViewById<LinearLayout>(R.id.qs_area)
-        val notificationsBtn = notificationPanel!!.findViewById<ImageView>(R.id.notifications_btn)
-        val orientationBtn = notificationPanel!!.findViewById<ImageView>(R.id.btn_orientation)
-        val touchModeBtn = notificationPanel!!.findViewById<ImageView>(R.id.btn_touch_mode)
-        val screenshotBtn = notificationPanel!!.findViewById<ImageView>(R.id.btn_screenshot)
-        val screencapBtn = notificationPanel!!.findViewById<ImageView>(R.id.btn_screencast)
-        val settingsBtn = notificationPanel!!.findViewById<ImageView>(R.id.btn_settings)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, notificationsBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, orientationBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, touchModeBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, screencapBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, screenshotBtn)
-        ColorUtils.applySecondaryColor(context, sharedPreferences, settingsBtn)
-        touchModeBtn.setOnClickListener {
-            hideNotificationPanel()
-            if (sharedPreferences.getBoolean("tablet_mode", false)) {
-                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), false)
-                sharedPreferences.edit {
-                    putBoolean("app_menu_fullscreen", false)
-                    putBoolean("tablet_mode", false)
-                }
-                Toast.makeText(context, R.string.tablet_mode_off, Toast.LENGTH_SHORT).show()
-            } else {
-                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), true)
-                sharedPreferences.edit {
-                    putBoolean("app_menu_fullscreen", true)
-                    putBoolean("tablet_mode", true)
-                }
-                Toast.makeText(context, R.string.tablet_mode_on, Toast.LENGTH_SHORT).show()
-            }
-        }
-        orientationBtn.setImageResource(
-            if (sharedPreferences.getBoolean(
-                    "lock_landscape",
-                    true
-                )
-            ) R.drawable.ic_screen_rotation_off else R.drawable.ic_screen_rotation_on
-        )
-        orientationBtn.setOnClickListener {
-            sharedPreferences.edit {
-                putBoolean("lock_landscape", !sharedPreferences.getBoolean("lock_landscape", true))
-            }
-            orientationBtn
-                .setImageResource(
-                    if (sharedPreferences.getBoolean(
-                            "lock_landscape",
-                            true
-                        )
-                    ) R.drawable.ic_screen_rotation_off else R.drawable.ic_screen_rotation_on
-                )
-        }
-        screenshotBtn.setOnClickListener {
-            hideNotificationPanel()
-            sendBroadcast(
-                Intent(NOTIFICATION_SERVICE_ACTION)
-                    .setPackage(packageName)
-                    .putExtra("action", ACTION_TAKE_SCREENSHOT)
-            )
-        }
-        screencapBtn.setOnClickListener {
-            hideNotificationPanel()
-            launchApp("standard", sharedPreferences.getString("app_rec", "")!!)
-        }
-        settingsBtn.setOnClickListener {
-            hideNotificationPanel()
-            launchApp("standard", packageName)
-        }
-        cancelAllBtn!!.setOnClickListener { cancelAllNotifications() }
-        notificationsBtn.setImageResource(
-            if (sharedPreferences.getBoolean(
-                    "show_notifications",
-                    true
-                )
-            ) R.drawable.ic_notifications else R.drawable.ic_notifications_off
-        )
-        notificationsBtn.setOnClickListener {
-            val showNotifications = sharedPreferences.getBoolean("show_notifications", true)
-            sharedPreferences.edit { putBoolean("show_notifications", !showNotifications) }
-            notificationsBtn.setImageResource(
-                if (!showNotifications) R.drawable.ic_notifications else R.drawable.ic_notifications_off
-            )
-            if (showNotifications) Toast.makeText(
-                context,
-                R.string.popups_disabled,
-                Toast.LENGTH_LONG
-            ).show()
-        }
-        ColorUtils.applyMainColor(this@NotificationService, sharedPreferences, notificationArea!!)
-        ColorUtils.applyMainColor(this@NotificationService, sharedPreferences, qsArea)
-        windowManager.addView(notificationPanel, layoutParams)
-        val separator = MaterialDividerItemDecoration(
-            ContextThemeWrapper(context, R.style.AppTheme_Dock), LinearLayoutManager.VERTICAL
-        )
-        separator.dividerColor = ColorUtils.getMainColors(sharedPreferences, context)[4]
-        separator.isLastItemDecorated = false
-        notificationsLv!!.addItemDecoration(separator)
-        updateNotificationPanel()
-        notificationPanel!!.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE
-                && (event.y < notificationPanel!!.measuredHeight || event.x < notificationPanel!!.x)
-            ) {
-                hideNotificationPanel()
-            }
-            false
-        }
-        Utils.notificationPanelVisible = true
-        updateNotificationCount()
-    }
-
-    private fun launchApp(mode: String, app: String) {
-        sendBroadcast(
-            Intent(LAUNCHER_ACTION)
-                .setPackage(packageName)
-                .putExtra("action", ACTION_LAUNCH_APP)
-                .putExtra("mode", mode)
-                .putExtra("app", app)
-        )
-    }
-
-    fun hideNotificationPanel() {
-        windowManager.removeView(notificationPanel)
-        Utils.notificationPanelVisible = false
-        notificationsLv = null
-        notificationPanel = null
-        cancelAllBtn = null
-    }
-
-    private fun updateNotificationPanel() {
-        val ignoredApps = sharedPreferences.getStringSet("ignored_notifications_panel", setOf())!!
-        val notifications =
-            activeNotifications.filterNot { ignoredApps.contains(it.packageName) }.sortedWith(
-                compareByDescending { AppUtils.isMediaNotification(it.notification) && it.isOngoing })
-                .toTypedArray<StatusBarNotification>()
-        var adapter = notificationsLv!!.adapter
-        if (adapter is NotificationAdapter)
-            adapter.updateNotifications(notifications)
-        else {
-            adapter = NotificationAdapter(
-                context,
-                notifications,
-                this
-            )
-            notificationsLv!!.adapter = adapter
-        }
-        val layoutParams = notificationsLv!!.layoutParams
-        val count = adapter.itemCount
-        if (count > 3) {
-            layoutParams.height = Utils.dpToPx(context, 232)
-        } else layoutParams.height = -2
-        notificationArea!!.visibility = if (count == 0) View.GONE else View.VISIBLE
-        notificationsLv!!.layoutParams = layoutParams
-    }
-
-    internal inner class DockServiceReceiver : BroadcastReceiver() {
-        override fun onReceive(p1: Context, intent: Intent) {
-            when (intent.getStringExtra("action")) {
-                ACTION_SHOW_NOTIFICATION_PANEL -> showNotificationPanel()
-                ACTION_HIDE_NOTIFICATION_PANEL -> hideNotificationPanel()
-                ACTION_RECREATE_NOTIFICATION_VIEWS -> restartUI()
-            }
-        }
-    }
-
-    override fun onNotificationClicked(sbn: StatusBarNotification, item: View) {
-        val notification = sbn.notification
-        if (notification.contentIntent != null) {
-            hideNotificationPanel()
-            try {
-                notification.contentIntent.send()
-                if (sbn.isClearable) cancelNotification(sbn.key)
-            } catch (_: CanceledException) {
-            }
-        }
-    }
-
-    override fun onNotificationLongClicked(notification: StatusBarNotification, item: View) {
-        item.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        val dialog = DockDialog(context, true)
-        dialog.setTitle(R.string.hide_notifications)
-        dialog.setMessage(R.string.hide_notification_panel)
-        dialog.setNegativeButton(R.string.cancel, null)
-        dialog.setPositiveButton(
-            R.string.hide
-        ) { dialog, which ->
-            val savedApps = sharedPreferences.getStringSet(
-                "ignored_notifications_panel",
-                setOf()
-            )!!
-            val ignoredApps = mutableSetOf<String>()
-            ignoredApps.addAll(savedApps)
-            ignoredApps.add(notification.packageName)
-            Toast.makeText(this, ignoredApps.toString(), Toast.LENGTH_LONG).show()
-            sharedPreferences.edit { putStringSet("ignored_notifications_panel", ignoredApps) }
-            Toast.makeText(
-                this@NotificationService,
-                R.string.silenced_notifications,
-                Toast.LENGTH_LONG
-            )
-                .show()
-            updateNotificationPanel()
-        }
-        dialog.show()
-    }
-
-    override fun onNotificationCancelClicked(notification: StatusBarNotification, item: View) {
-        cancelNotification(notification.key)
     }
 
     override fun onSharedPreferenceChanged(p0: SharedPreferences?, preference: String?) {
@@ -590,37 +323,41 @@ class NotificationService : NotificationListenerService(), OnNotificationClickLi
         }
     }
 
-    private fun restartUI() {
-        Log.e(packageName, "restarting notif")
-        removeAllViews()
-        createViews()
+    override fun onBind(intent: Intent?): IBinder? {
+        return if (intent?.action == ACTION_BIND_NOTIFICATION_SERVICE) binder else super.onBind(
+            intent
+        )
     }
 
-    private fun removeAllViews() {
-        try {
-            if (::windowManager.isInitialized) {
-                notificationPanel?.let { windowManager.removeViewImmediate(it) }
-                if (::notificationLayout.isInitialized) {
-                    windowManager.removeViewImmediate(notificationLayout)
-                }
-            }
-        } catch (_: Exception) {
+    private val binder = object : INotificationServiceBridge.Stub() {
+        override fun getNotifications(): List<StatusBarNotification?>? {
+            return activeNotifications.toList()
         }
 
-        notificationPanel = null
-        notificationsLv = null
-        cancelAllBtn = null
-    }
+        override fun getNotificationCount(): Int {
+            var count = 0
+            var cancelableCount = 0
+            val notifications = activeNotifications
+            for (notification in notifications) {
+                if (notification != null && notification.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0) {
+                    count++
+                    if (notification.isClearable) cancelableCount++
+                }
+            }
+            return count
+        }
 
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        updateLayoutParams()
-        if (Utils.notificationPanelVisible)
-            hideNotificationPanel()
+        override fun mCancelNotification(key: String?) {
+            cancelNotification(key)
+        }
+
+        override fun registerCallback(callback: INotificationCallback?) {
+            notificationsCallback = callback
+        }
+
     }
 
     override fun onDestroy() {
-        removeAllViews()
         super.onDestroy()
     }
 }

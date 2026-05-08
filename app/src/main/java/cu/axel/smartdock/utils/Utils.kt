@@ -33,7 +33,6 @@ object Utils {
     var shouldPlayChargeComplete = false
     var startupTime: Long = 0
 
-    //public static int dockHeight;
     fun toggleBuiltinNavigation(editor: SharedPreferences.Editor, value: Boolean) {
         editor.putBoolean("enable_nav_back", value)
         editor.putBoolean("enable_nav_home", value)
@@ -234,4 +233,12 @@ object Utils {
 
     val currentDateString: String
         get() = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(Date())
+
+    fun getClassInfo(obj: Class<*>): String{
+        var info = ""
+        obj.declaredMethods.forEach { method ->
+            info += "\n${method.toGenericString()}"
+        }
+        return info
+    }
 }
