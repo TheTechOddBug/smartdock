@@ -7,5 +7,6 @@ interface INotificationServiceBridge {
     List<StatusBarNotification> getNotifications();
     int getNotificationCount();
     void mCancelNotification(String key);
+    void cancelAll();
     void registerCallback(INotificationCallback callback);
 }

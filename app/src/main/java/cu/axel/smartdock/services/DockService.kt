@@ -1680,6 +1680,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             quickSettingsPanel!!.findViewById<LinearLayout>(R.id.notifications_layout)
         val quickSettingsArea =
             quickSettingsPanel!!.findViewById<LinearLayout>(R.id.quick_settings_layout)
+        val cancelAllButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.cancel_all_n_btn)
+        cancelAllButton.setOnClickListener { notificationBridge?.cancelAll() }
         val volumeButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.volume_btn)
         val volumeSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.volume_seekbar)
         val brightnessButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.brightness_btn)
@@ -1698,6 +1700,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(p0: TabLayout.Tab?) {
                 notificationArea.isVisible = p0!!.position == 0
+                cancelAllButton.isVisible = p0.position == 0
                 quickSettingsArea.isVisible = p0.position == 1
             }
 

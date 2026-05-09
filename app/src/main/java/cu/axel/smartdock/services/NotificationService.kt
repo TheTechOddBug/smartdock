@@ -351,6 +351,10 @@ class NotificationService : NotificationListenerService(),
             cancelNotification(key)
         }
 
+        override fun cancelAll() {
+            cancelAllNotifications()
+        }
+
         override fun registerCallback(callback: INotificationCallback?) {
             notificationsCallback = callback
         }
