@@ -106,14 +106,6 @@ object DeviceUtils {
         }
     }
 
-    fun getSecureSetting(context: Context, setting: String, defaultValue: Int): Int {
-        return try {
-            Settings.Secure.getInt(context.contentResolver, setting)
-        } catch (_: Exception) {
-            defaultValue
-        }
-    }
-
     fun getSecureSetting(context: Context, setting: String, defaultValue: String): String {
         return try {
             val value = Settings.Secure.getString(context.contentResolver, setting)
@@ -146,6 +138,24 @@ object DeviceUtils {
             Settings.Global.getInt(context.contentResolver, setting)
         } catch (_: Exception) {
             defaultValue
+        }
+    }
+
+    fun getSystemSetting(context: Context, setting: String, defaultValue: String): String {
+        return try {
+            val value = Settings.System.getString(context.contentResolver, setting)
+            value ?: defaultValue
+        } catch (_: Exception) {
+            defaultValue
+        }
+    }
+
+    fun putSystemSetting(context: Context, setting: String, value: String): Boolean {
+        return try {
+            Settings.System.putString(context.contentResolver, setting, value)
+            true
+        } catch (_: SecurityException) {
+            false
         }
     }
 
@@ -367,6 +377,6 @@ object DeviceUtils {
     }
 
     fun getSettingsOverlaysAllowed(context: Context): Boolean {
-        return getSecureSetting(context, SETTING_OVERLAYS, 0) == 1
+        return getSecureSetting(context, SETTING_OVERLAYS, "0") == "1"
     }
 }

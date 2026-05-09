@@ -1686,6 +1686,29 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val volumeSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.volume_seekbar)
         val brightnessButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.brightness_btn)
         val brightnessSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.brightness_seekbar)
+        brightnessSeekbar.progress =
+            DeviceUtils.getSystemSetting(this, Settings.System.SCREEN_BRIGHTNESS, "0").toInt()
+        brightnessSeekbar.setOnSeekBarChangeListener(object : OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                p0: SeekBar?,
+                p1: Int,
+                p2: Boolean
+            ) {
+                val changed = DeviceUtils.putSystemSetting(
+                    this@DockService,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    p1.toString()
+                )
+            }
+
+            override fun onStartTrackingTouch(p0: SeekBar?) {
+
+            }
+
+            override fun onStopTrackingTouch(p0: SeekBar?) {
+
+            }
+        })
         volumeSeekbar.max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         volumeSeekbar.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         volumeSeekbar.setOnSeekBarChangeListener(object : OnSeekBarChangeListener {
