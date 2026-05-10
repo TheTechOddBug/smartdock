@@ -2,9 +2,13 @@ package cu.axel.smartdock.wrappers
 
 import android.annotation.SuppressLint
 import android.bluetooth.IBluetoothManager
+import android.content.AttributionSource
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.annotation.RequiresApi
 import cu.axel.smartdock.utils.Utils
+import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 
@@ -38,7 +42,14 @@ class BluetoothManagerWrapper {
 
     fun isAlive() = binder?.isBinderAlive == true && bluetoothManager != null
 
+    @RequiresApi(Build.VERSION_CODES.S)
     fun setBluetoothEnabled(enabled: Boolean): Boolean {
-        return true
+        val packageName = "com.android.shell"
+        val attributionSource =
+            AttributionSource.Builder(Shizuku.getUid()).setPackageName(packageName).build()
+        return if (enabled)
+            bluetoothManager?.enable(attributionSource) ?: false
+        else
+            bluetoothManager?.disable(attributionSource, true) ?: false
     }
 }

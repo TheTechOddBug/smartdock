@@ -31,6 +31,7 @@ import android.hardware.usb.UsbManager
 import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -1652,7 +1653,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         bluetoothButton = null
     }
 
-    @SuppressLint("ClickableViewAccessibility")
+    @SuppressLint("ClickableViewAccessibility", "MissingPermission")
     private fun showQuickSettingsPanel(selectedTab: Int = 0) {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         val layoutParams = Utils.makeWindowParams(
@@ -1763,10 +1764,17 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         }
 
         bluetoothButton?.setOnClickListener {
-            if (DeviceUtils.hasShizukuPermission() && bluetoothManagerWrapper?.isAlive() == true)
-                bluetoothManagerWrapper?.setBluetoothEnabled(!bluetoothManager.adapter.isEnabled)
-            else {
-                openBluetoothSettings()
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                if (!bluetoothManager.adapter.isEnabled)
+                    bluetoothManager.adapter?.enable()
+                else
+                    bluetoothManager.adapter?.disable()
+            } else {
+                if (DeviceUtils.hasShizukuPermission() && bluetoothManagerWrapper?.isAlive() == true)
+                    bluetoothManagerWrapper?.setBluetoothEnabled(!bluetoothManager.adapter.isEnabled)
+                else {
+                    openBluetoothSettings()
+                }
             }
         }
         bluetoothTile.setOnClickListener {

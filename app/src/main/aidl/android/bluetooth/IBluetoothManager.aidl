@@ -2,6 +2,7 @@ package android.bluetooth;
 
 interface IBluetoothManager {
     boolean isEnabled();
-    boolean enable();
-    boolean disable(boolean persist);
+    //Api31+
+    boolean enable(in android.content.AttributionSource p1);
+    boolean disable(in android.content.AttributionSource p1, boolean persist);
 }
