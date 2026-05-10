@@ -29,6 +29,10 @@ import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -201,6 +205,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private lateinit var keyguardManager: KeyguardManager
     private var iconPackUtils: IconPackUtils? = null
     private var notificationBridge: INotificationServiceBridge? = null
+    private lateinit var connectivityManager: ConnectivityManager
     private lateinit var statusArea: LinearLayout
     override fun onCreate() {
         super.onCreate()
@@ -209,6 +214,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
         sharedPreferences.registerOnSharedPreferenceChangeListener(this)
         displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
+        connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
@@ -364,6 +370,12 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             }
 
         }, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+
+        connectivityManager.registerNetworkCallback(
+            NetworkRequest.Builder().addTransportType(
+                NetworkCapabilities.TRANSPORT_WIFI
+            ).build(), wifiNetworkCallback
+        )
 
 
         bindNotificationService()
@@ -2073,6 +2085,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             unregisterReceiver(soundEventsReceiver)
         if (::displayListener.isInitialized && ::displayManager.isInitialized)
             displayManager.unregisterDisplayListener(displayListener)
+        connectivityManager.unregisterNetworkCallback(wifiNetworkCallback)
         removeAllViews()
         unbindService(notificationServiceConnection)
         super.onDestroy()
@@ -2390,6 +2403,15 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 ColorUtils.applyMainColor(context, sharedPreferences, wifiButton!!)
             }
             wifiButton?.setImageDrawable(wifiIcon)
+            val wifiSsidTv = quickSettingsPanel!!.findViewById<TextView>(R.id.wifi_ssid_tv)
+            wifiManagerWrapper?.getConnectionInfo()?.let {
+                if (it.ssid.startsWith("<") && it.ssid.endsWith(">"))
+                    wifiSsidTv.isVisible = false
+                else {
+                    wifiSsidTv.isVisible = true
+                    wifiSsidTv.text = it.ssid.replace("\"", "")
+                }
+            }
         }
         wifiBtn.setImageResource(if (enabled) R.drawable.ic_wifi_on else R.drawable.ic_wifi_off)
     }
@@ -2538,5 +2560,22 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             notificationBtn.setBackgroundResource(R.drawable.ic_expand_up_circle)
             notificationBtn.text = ""
         }
+    }
+
+    private val wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            CoroutineScope(Dispatchers.Main).launch {
+                if (quickSettingsPanelVisible)
+                    updateWiFiStatus()
+            }
+        }
+
+        override fun onLost(network: Network) {
+            CoroutineScope(Dispatchers.Main).launch {
+                if (quickSettingsPanelVisible)
+                    updateWiFiStatus()
+            }
+        }
+
     }
 }

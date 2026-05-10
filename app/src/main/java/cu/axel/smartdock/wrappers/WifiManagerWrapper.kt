@@ -3,7 +3,10 @@ package cu.axel.smartdock.wrappers
 import android.annotation.SuppressLint
 import android.net.wifi.IWifiManager
 import android.net.wifi.ScanResult
+import android.net.wifi.WifiInfo
 import android.os.IBinder
+import android.util.Log
+import cu.axel.smartdock.utils.Utils
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 import java.lang.reflect.Method
@@ -11,6 +14,7 @@ import java.lang.reflect.Method
 class WifiManagerWrapper {
     private var getListMethod: Method? = null
     private var getScanResultsMethod: Method? = null
+    private var getConnectionInfoMethod: Method? = null
     private var binder: ShizukuBinderWrapper? = null
     private var wifiManager: IWifiManager? = null
 
@@ -37,9 +41,14 @@ class WifiManagerWrapper {
                 "getScanResults",
                 String::class.java, String::class.java
             )
+            getConnectionInfoMethod = wifiManager!!.javaClass.getDeclaredMethod(
+                "getConnectionInfo",
+                String::class.java, String::class.java
+            )
             val parceledListSliceClass =
                 Class.forName("com.android.wifi.x.com.android.modules.utils.ParceledListSlice")
             getListMethod = parceledListSliceClass.getDeclaredMethod("getList")
+
         }
     }
 
@@ -47,6 +56,9 @@ class WifiManagerWrapper {
 
     fun setWifiEnabled(enabled: Boolean): Boolean {
         return wifiManager?.setWifiEnabled("com.android.shell", enabled) ?: false
+    }
+    fun getConnectionInfo(): WifiInfo? {
+        return getConnectionInfoMethod!!.invoke(wifiManager, "com.android.shell", "") as WifiInfo?
     }
 
     fun getScanResults(): List<ScanResult> {
