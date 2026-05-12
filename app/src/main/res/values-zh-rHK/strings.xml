@@ -334,5 +334,7 @@
     <string name="snap">Snap...</string>
     <string name="top">Top</string>
     <string name="bottom">Bottom</string>
+    <string name="wi_fi">Wi-Fi</string>
+    <string name="bluetooth">Bluetooth</string>
 
 </resources>
