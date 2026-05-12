@@ -23,10 +23,8 @@ import android.content.SharedPreferences
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.content.pm.ActivityInfo
 import android.content.pm.LauncherApps
-import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbManager
@@ -78,6 +76,7 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
+import androidx.core.view.setPadding
 import androidx.core.widget.addTextChangedListener
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
@@ -1583,46 +1582,30 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     }
 
     private fun updateQuickSettings() {
-        notificationBtn.visibility =
-            if (sharedPreferences.getBoolean(
-                    "enable_qs_notif$orientationValue",
-                    true
-                )
-            ) View.VISIBLE else View.GONE
-        bluetoothBtn.visibility = if (sharedPreferences.getBoolean(
-                "enable_qs_bluetooth$orientationValue",
-                false
-            )
-        ) View.VISIBLE else View.GONE
-        batteryBtn.visibility = if (sharedPreferences.getBoolean(
-                "enable_qs_battery$orientationValue",
-                false
-            )
-        ) View.VISIBLE else View.GONE
-        wifiBtn.visibility =
-            if (sharedPreferences.getBoolean(
-                    "enable_qs_wifi$orientationValue",
-                    true
-                )
-            ) View.VISIBLE else View.GONE
-        pinBtn.visibility =
-            if (sharedPreferences.getBoolean(
-                    "enable_qs_pin$orientationValue",
-                    true
-                )
-            ) View.VISIBLE else View.GONE
-        volumeBtn.visibility =
-            if (sharedPreferences.getBoolean(
-                    "enable_qs_vol$orientationValue",
-                    true
-                )
-            ) View.VISIBLE else View.GONE
-        dateTv.visibility =
-            if (sharedPreferences.getBoolean(
-                    "enable_qs_date$orientationValue",
-                    true
-                )
-            ) View.VISIBLE else View.GONE
+        val notifEnabled = sharedPreferences.getBoolean("enable_qs_notif$orientationValue", true)
+        notificationBtn.isVisible = notifEnabled
+
+        val bluetoothEnabled =
+            sharedPreferences.getBoolean("enable_qs_bluetooth$orientationValue", false)
+        bluetoothBtn.isVisible = bluetoothEnabled
+
+        val batteryEnabled =
+            sharedPreferences.getBoolean("enable_qs_battery$orientationValue", false)
+        batteryBtn.isVisible = batteryEnabled
+
+        val wifiEnabled = sharedPreferences.getBoolean("enable_qs_wifi$orientationValue", true)
+        wifiBtn.isVisible = wifiEnabled
+
+        pinBtn.isVisible = sharedPreferences.getBoolean("enable_qs_pin$orientationValue", true)
+
+        val volumeEnabled = sharedPreferences.getBoolean("enable_qs_vol$orientationValue", true)
+        volumeBtn.isVisible = volumeEnabled
+
+        dateTv.isVisible = sharedPreferences.getBoolean("enable_qs_date$orientationValue", true)
+
+        val statusEnabled = bluetoothEnabled || batteryEnabled || wifiEnabled || volumeEnabled
+        statusArea.isVisible = notifEnabled || statusEnabled
+        statusArea.setPadding(if (statusEnabled) Utils.dpToPx(context, 4) else 0)
     }
 
     private fun launchAssistant() {
@@ -2117,7 +2100,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         createHotCorners()
         createAppMenu()
         notificationLayout = NotificationLayout(context, sharedPreferences)
-        windowManager.addView(notificationLayout!!.notificationLayout, notificationLayout!!.notificationLayoutParams)
+        windowManager.addView(
+            notificationLayout!!.notificationLayout,
+            notificationLayout!!.notificationLayoutParams
+        )
         applyTheme()
     }
 
@@ -2500,7 +2486,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     updateNotificationCount()
                     notificationLayout?.let {
                         it.updateNotificationLayout(sbn!!)
-                        windowManager.updateViewLayout(it.notificationLayout, it.notificationLayoutParams)
+                        windowManager.updateViewLayout(
+                            it.notificationLayout,
+                            it.notificationLayoutParams
+                        )
                     }
                 }
 
