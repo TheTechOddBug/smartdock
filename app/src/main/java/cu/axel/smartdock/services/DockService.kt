@@ -23,8 +23,10 @@ import android.content.SharedPreferences
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.content.pm.ActivityInfo
 import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbManager
@@ -98,6 +100,7 @@ import cu.axel.smartdock.adapters.DockAppAdapter
 import cu.axel.smartdock.adapters.DockAppAdapter.OnDockAppClickListener
 import cu.axel.smartdock.adapters.NotificationAdapter
 import cu.axel.smartdock.adapters.NotificationAdapter.OnNotificationClickListener
+import cu.axel.smartdock.components.NotificationLayout
 import cu.axel.smartdock.db.DBHelper
 import cu.axel.smartdock.dialogs.DockDialog
 import cu.axel.smartdock.dialogs.NotificationPermissionDialog
@@ -206,6 +209,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     private var iconPackUtils: IconPackUtils? = null
     private var notificationBridge: INotificationServiceBridge? = null
     private lateinit var connectivityManager: ConnectivityManager
+    private var notificationLayout: NotificationLayout? = null
     private lateinit var statusArea: LinearLayout
     override fun onCreate() {
         super.onCreate()
@@ -2112,6 +2116,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         createDock()
         createHotCorners()
         createAppMenu()
+        notificationLayout = NotificationLayout(context, sharedPreferences)
+        windowManager.addView(notificationLayout!!.notificationLayout, notificationLayout!!.notificationLayoutParams)
         applyTheme()
     }
 
@@ -2441,6 +2447,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             appMenu?.let { windowManager.removeViewImmediate(it) }
             topRightCorner?.let { windowManager.removeViewImmediate(it) }
             bottomRightCorner?.let { windowManager.removeViewImmediate(it) }
+            notificationLayout?.let { windowManager.removeViewImmediate(it.notificationLayout) }
         } catch (_: Exception) {
         }
 
@@ -2449,6 +2456,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         appMenu = null
         topRightCorner = null
         bottomRightCorner = null
+        notificationLayout = null
     }
 
     inner class HotCornersHoverListener(val key: String) : View.OnHoverListener {
@@ -2490,6 +2498,10 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     if (quickSettingsPanelVisible)
                         updateNotificationArea()
                     updateNotificationCount()
+                    notificationLayout?.let {
+                        it.updateNotificationLayout(sbn!!)
+                        windowManager.updateViewLayout(it.notificationLayout, it.notificationLayoutParams)
+                    }
                 }
 
                 override fun onNotificationRemoved(sbn: StatusBarNotification?) {
