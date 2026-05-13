@@ -335,6 +335,8 @@ object DeviceUtils {
         return mode == AppOpsManager.MODE_ALLOWED
     }
 
+    fun canWriteSettings(context: Context) = checkAppOpsPermission(context, AppOpsManager.OPSTR_WRITE_SETTINGS)
+
     fun hasShizukuPermission() =
         Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
 

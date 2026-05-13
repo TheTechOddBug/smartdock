@@ -31,7 +31,8 @@ import cu.axel.smartdock.utils.Utils
 
 class NotificationLayout(
     private val context: Context,
-    private val sharedPreferences: SharedPreferences
+    private val sharedPreferences: SharedPreferences,
+    val listener: NotificationCancelListener
 ) {
     lateinit var notificationLayout: LinearLayout
     private lateinit var notificationTitleTv: TextView
@@ -47,6 +48,10 @@ class NotificationLayout(
 
     init {
         createNotificationLayout()
+    }
+
+    interface NotificationCancelListener {
+        fun onNotificationCancel(key: String)
     }
 
     fun updateNotificationLayout(sbn: StatusBarNotification) {
@@ -144,8 +149,8 @@ class NotificationLayout(
             }
             notificationCloseBtn.setOnClickListener {
                 notificationLayout.visibility = View.GONE
-//                if (sbn.isClearable)
-//                    cancelNotification(sbn.key)
+                if (sbn.isClearable)
+                    listener.onNotificationCancel(sbn.key)
             }
             notificationLayout.setOnClickListener {
                 notificationLayout.visibility = View.GONE
@@ -154,8 +159,8 @@ class NotificationLayout(
                 if (intent != null) {
                     try {
                         intent.send()
-//                        if (sbn.isClearable)
-//                            cancelNotification(sbn.key)
+                        if (sbn.isClearable)
+                            listener.onNotificationCancel(sbn.key)
                     } catch (_: CanceledException) {
                     }
                 }
@@ -180,8 +185,8 @@ class NotificationLayout(
                     Toast.LENGTH_LONG
                 )
                     .show()
-//                if (sbn.isClearable)
-//                    cancelNotification(sbn.key)
+                if (sbn.isClearable)
+                    listener.onNotificationCancel(sbn.key)
                 true
             }
             notificationLayout.animate().alpha(1f).setDuration(300)

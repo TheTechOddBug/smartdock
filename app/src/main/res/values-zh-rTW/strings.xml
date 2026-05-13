@@ -335,5 +335,7 @@
     <string name="bottom">Bottom</string>
     <string name="wi_fi">Wi-Fi</string>
     <string name="bluetooth">Bluetooth</string>
+    <string name="missing_permission">Missing permission</string>
+    <string name="write_settings_desc">Changing brightness requires write system settings opermission. Please grant it on the app\'s management screen</string>
 
 </resources>

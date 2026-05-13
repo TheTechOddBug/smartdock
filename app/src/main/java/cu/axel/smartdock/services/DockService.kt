@@ -1,5 +1,6 @@
 package cu.axel.smartdock.services
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -23,6 +24,7 @@ import android.content.SharedPreferences
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.content.pm.ActivityInfo
 import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
 import android.content.res.Configuration
 import android.graphics.PorterDuff
@@ -990,7 +992,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         ) Gravity.CENTER_HORIZONTAL else Gravity.START
         layoutParams.gravity = Gravity.BOTTOM or hAlign
         ColorUtils.applyMainColor(context, sharedPreferences, appMenu!!)
-        ColorUtils.applyColor(appsSeparator, ColorUtils.getMainColors(sharedPreferences, this)[4])
+        ColorUtils.applyColor(appsSeparator, getMainColors(sharedPreferences, this)[4])
 
         //Load apps
         updateAppMenu()
@@ -1676,17 +1678,21 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         val brightnessSeekbar = quickSettingsPanel!!.findViewById<SeekBar>(R.id.brightness_seekbar)
         brightnessSeekbar.progress =
             DeviceUtils.getSystemSetting(this, Settings.System.SCREEN_BRIGHTNESS, "0").toInt()
+        val canWriteSettings = DeviceUtils.canWriteSettings(this)
         brightnessSeekbar.setOnSeekBarChangeListener(object : OnSeekBarChangeListener {
             override fun onProgressChanged(
                 p0: SeekBar?,
                 p1: Int,
                 p2: Boolean
             ) {
-                val changed = DeviceUtils.putSystemSetting(
-                    this@DockService,
-                    Settings.System.SCREEN_BRIGHTNESS,
-                    p1.toString()
-                )
+                if (canWriteSettings) {
+                    DeviceUtils.putSystemSetting(
+                        this@DockService,
+                        Settings.System.SCREEN_BRIGHTNESS,
+                        p1.toString()
+                    )
+                } else
+                    showSettingsPermissionDialog()
             }
 
             override fun onStartTrackingTouch(p0: SeekBar?) {
@@ -1726,9 +1732,8 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         })
         tabLayout.selectTab(tabLayout.getTabAt(selectedTab))
         ColorUtils.applySecondaryColor(context, sharedPreferences, volumeButton)
-        wifiButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.wifi_btn)
+        wifiButton = quickSettingsPanel!!.findViewById(R.id.wifi_btn)
         val wifiTile = quickSettingsPanel!!.findViewById<LinearLayout>(R.id.wifi_tile)
-        val wifiSSIDTv = quickSettingsPanel!!.findViewById<TextView>(R.id.wifi_ssid_tv)
         bluetoothButton = quickSettingsPanel!!.findViewById<ImageView>(R.id.bluetooth_btn)
         val bluetoothTile = quickSettingsPanel!!.findViewById<LinearLayout>(R.id.bluetooth_tile)
         val notificationsBtn = quickSettingsPanel!!.findViewById<ImageView>(R.id.notifications_btn)
@@ -2087,7 +2092,14 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         createDock()
         createHotCorners()
         createAppMenu()
-        notificationLayout = NotificationLayout(context, sharedPreferences)
+        notificationLayout = NotificationLayout(
+            context,
+            sharedPreferences,
+            object : NotificationLayout.NotificationCancelListener {
+                override fun onNotificationCancel(key: String) {
+                    notificationBridge?.mCancelNotification(key)
+                }
+            })
         windowManager.addView(
             notificationLayout!!.notificationLayout,
             notificationLayout!!.notificationLayoutParams
@@ -2549,6 +2561,22 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             notificationBtn.setBackgroundResource(R.drawable.ic_expand_up_circle)
             notificationBtn.text = ""
         }
+    }
+
+    private fun showSettingsPermissionDialog() {
+        val dialog = DockDialog(context, true)
+        dialog.setTitle(R.string.missing_permission)
+        dialog.setMessage(R.string.write_settings_desc)
+        dialog.setNegativeButton(R.string.cancel, null)
+        dialog.setPositiveButton(
+            R.string.manage
+        ) { dialog, which ->
+            launchApp(
+                null, null, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData("package:${packageName}".toUri())
+            )
+        }
+        dialog.show()
     }
 
     private val wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
