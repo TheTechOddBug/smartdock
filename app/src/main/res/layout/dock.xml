@@ -45,10 +45,10 @@
                 android:gravity="center_vertical"
                 android:id="@+id/status_area"
                 android:layout_width="wrap_content"
-                android:layout_height="35dp"
+                android:layout_height="wrap_content"
                 android:layout_margin="5dp"
                 android:background="@drawable/search_background"
-                android:padding="5dp">
+                android:padding="4dp">
 
                 <TextView
                     android:id="@+id/notifications_btn"

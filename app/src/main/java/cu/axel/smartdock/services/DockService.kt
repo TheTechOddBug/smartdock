@@ -515,17 +515,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                 ) == AccessibilityEvent.WINDOWS_CHANGE_ADDED
             )
                 updateRunningTasks()
-        } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (event.packageName == "com.android.systemui")
-                if (event.contentChangeTypes.and(AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_APPEARED) == AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_APPEARED) {
-                    if (keyguardManager.isKeyguardLocked) {
-                        dock?.isVisible = false
-                        if (appMenuVisible)
-                            hideAppMenu()
-                    }
-                } else if (event.contentChangeTypes.and(AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_DISAPPEARED) == AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_DISAPPEARED) {
-                    dock?.isVisible = true
-                }
         } else if (sharedPreferences.getBoolean(
                 "custom_toasts",
                 false
@@ -948,8 +937,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
                     -1,
                     usableHeight + margins,
                     context,
-                    preferSecondaryDisplay,
-                    true
+                    preferSecondaryDisplay
                 )
             layoutParams.y = dockHeight
             if (sharedPreferences.getInt("dock_layout", -1) != 0) {
@@ -975,7 +963,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
             )
             layoutParams = Utils.makeWindowParams(
                 width.coerceAtMost(deviceWidth - margins * 2), height.coerceAtMost(usableHeight),
-                context, preferSecondaryDisplay, true
+                context, preferSecondaryDisplay
             )
             layoutParams.x = margins
             layoutParams.y = margins + dockHeight
@@ -1198,7 +1186,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
     @SuppressLint("ClickableViewAccessibility")
     private fun showAppContextMenu(app: App, anchor: View) {
         val view = LayoutInflater.from(context).inflate(R.layout.task_list, null)
-        val layoutParams = Utils.makeWindowParams(-2, -2, context, preferSecondaryDisplay, true)
+        val layoutParams = Utils.makeWindowParams(-2, -2, context, preferSecondaryDisplay)
         ColorUtils.applyMainColor(context, sharedPreferences, view)
         layoutParams.gravity = Gravity.START or Gravity.TOP
         layoutParams.flags =
@@ -2211,7 +2199,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         dockHeight =
             Utils.dpToPx(context, sharedPreferences.getString("dock_height", "56")!!.toInt())
         dockLayoutParams =
-            Utils.makeWindowParams(-1, dockHeight, context, preferSecondaryDisplay, true)
+            Utils.makeWindowParams(-1, dockHeight, context, preferSecondaryDisplay)
         dockLayoutParams.screenOrientation =
             if (sharedPreferences.getBoolean("lock_landscape", false))
                 ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
