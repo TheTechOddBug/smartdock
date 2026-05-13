@@ -1772,7 +1772,6 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         bluetoothTile.setOnClickListener {
             openBluetoothSettings()
         }
-        //ColorUtils.applyMainColor(context, sharedPreferences, wifiButton)
 
         notificationsLv = quickSettingsPanel!!.findViewById(R.id.notification_lv)
 
