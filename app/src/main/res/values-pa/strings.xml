@@ -296,8 +296,6 @@
     <string name="display_settings">ਡਿਸਪਲੇ ਸੈਟਿੰਗਜ਼</string>
 
     <!-- Toasts -->
-    <string name="tablet_mode_on">ਟੈਬਲੈੱਟ ਮੋਡ ਚਾਲੂ ਹੈ</string>
-    <string name="tablet_mode_off">ਟੈਬਲੈੱਟ ਮੋਡ ਬੰਦ</string>
     <string name="start_message">ਸਮਾਰਟ ਡੌਕ ਸ਼ੁਰੂ ਹੋਇਆ</string>
     <string name="enable_access_help">ਸਮਾਰਟ ਡੌਕ ਸੇਵਾ ਲੱਭੋ ਅਤੇ ਚਾਲੂ ਕਰੋ</string>
 

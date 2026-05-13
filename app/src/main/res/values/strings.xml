@@ -301,8 +301,6 @@
     <string name="display_settings">Display settings</string>
 
     <!-- Toasts -->
-    <string name="tablet_mode_on">Tablet mode on</string>
-    <string name="tablet_mode_off">Tablet mode off</string>
     <string name="start_message">Smart Dock started</string>
     <string name="enable_access_help">Find and enable Smart Dock service</string>
 

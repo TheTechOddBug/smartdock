@@ -104,6 +104,7 @@ import cu.axel.smartdock.adapters.NotificationAdapter.OnNotificationClickListene
 import cu.axel.smartdock.components.NotificationLayout
 import cu.axel.smartdock.db.DBHelper
 import cu.axel.smartdock.dialogs.DockDialog
+import cu.axel.smartdock.dialogs.DockLayoutDialog
 import cu.axel.smartdock.dialogs.NotificationPermissionDialog
 import cu.axel.smartdock.models.Action
 import cu.axel.smartdock.models.App
@@ -1786,21 +1787,7 @@ class DockService : AccessibilityService(), OnSharedPreferenceChangeListener, On
         ColorUtils.applySecondaryColor(context, sharedPreferences, settingsBtn)
         touchModeBtn.setOnClickListener {
             hideQuickSettingsPanel()
-            if (sharedPreferences.getBoolean("tablet_mode", false)) {
-                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), false)
-                sharedPreferences.edit {
-                    putBoolean("app_menu_fullscreen", false)
-                    putBoolean("tablet_mode", false)
-                }
-                Toast.makeText(context, R.string.tablet_mode_off, Toast.LENGTH_SHORT).show()
-            } else {
-                Utils.toggleBuiltinNavigation(sharedPreferences.edit(), true)
-                sharedPreferences.edit {
-                    putBoolean("app_menu_fullscreen", true)
-                    putBoolean("tablet_mode", true)
-                }
-                Toast.makeText(context, R.string.tablet_mode_on, Toast.LENGTH_SHORT).show()
-            }
+            DockLayoutDialog(context, true)
         }
         orientationBtn.setImageResource(
             if (sharedPreferences.getBoolean(

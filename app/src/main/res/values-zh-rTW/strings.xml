@@ -295,8 +295,6 @@
     <string name="display_settings">顯示設定</string>
 
     <!-- Toasts -->
-    <string name="tablet_mode_on">平板模式已開啟</string>
-    <string name="tablet_mode_off">平板模式已關閉</string>
     <string name="start_message">Smart Dock 已啟動</string>
     <string name="enable_access_help">請找到並啟用 Smart Dock 服務</string>
 

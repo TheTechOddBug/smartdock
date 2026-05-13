@@ -301,8 +301,6 @@
     <string name="display_settings">Configuración de pantalla</string>
 
     <!-- Toasts -->
-    <string name="tablet_mode_on">Modo tableta activado</string>
-    <string name="tablet_mode_off">Modo tableta desactivado</string>
     <string name="start_message">Smart Dock iniciado</string>
     <string name="enable_access_help">Encuentre y habilite el servicio Smart Dock</string>
 
